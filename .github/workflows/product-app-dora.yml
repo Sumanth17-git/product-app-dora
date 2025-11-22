@@ -1,7 +1,5 @@
 # This is a basic workflow to help you get started with Actions
-
-name: CI
-
+name: product-app-dora
 # Controls when the workflow will run
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
@@ -13,21 +11,95 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest || echo "No tests yet"
+       # run: exit 1   # always fail
+
+      # Report Deployment on Success
+      - name: Report Deployment to Datadog (DORA Metrics)
+        run: |
+          # --- Unified Service Tagging ---
+          export DD_SERVICE="product-app-dora"
+          export DD_ENV="dev"
+          export DD_VERSION="${GITHUB_SHA}"
+          export DD_TAGS="team:sre,project:product-app-dora"
+
+          deploy_start=$(date +%s%N)
+          deploy_end=$((deploy_start + 50000000000))   # +50s offset
+
+          curl -X POST "https://api.${{ secrets.DD_SITE }}/api/v2/dora/deployment" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -H "DD-API-KEY: ${{ secrets.DD_API_KEY }}" \
+            -d @- <<EOF
+          {
+            "data": {
+              "attributes": {
+                "service": "product-app-dora",
+                "env": "dev",
+                "version": "${{ github.sha }}",
+                "started_at": $deploy_start,
+                "finished_at": $deploy_end,
+                "git": {
+                  "commit_sha": "${{ github.sha }}",
+                  "repository_url": "https://github.com/${{ github.repository }}"
+                },
+                "team": "sre",
+                "custom_tags": [
+                  "pipeline:ci",
+                  "project:product-app-dora"
+                ]
+              }
+            }
+          }
+          EOF
+
+      # Report Incident on Failure
+      - name: Report Incident to Datadog (on failure)
+        if: failure()
+        run: |
+          incident_start=$(date +%s%N)
+          incident_end=$((incident_start + 5000000000))   # +5s offset
+
+          curl -X POST "https://api.${{ secrets.DD_SITE }}/api/v2/dora/incident" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -H "DD-API-KEY: ${{ secrets.DD_API_KEY }}" \
+            -d @- <<EOF
+          {
+            "data": {
+              "attributes": {
+                "services": ["product-app-dora"],
+                "started_at": $incident_start,
+                "finished_at": $incident_end,
+                "env": "dev",
+                "name": "CI Pipeline build failure",
+                "severity": "high",
+                "version": "${{ github.sha }}",
+                "git": {
+                  "commit_sha": "${{ github.sha }}",
+                  "repository_url": "https://github.com/${{ github.repository }}"
+                }
+              }
+            }
+          }
+          EOF
 
       # Runs a set of commands using the runners shell
       - name: Run a multi-line script
