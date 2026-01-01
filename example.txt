@@ -1,0 +1,8 @@
+test
+This site can’t be reached
+54.237.202.194 refused to connect.
+Try:
+
+Checking the connection
+Checking the proxy and the firewall
+ERR_CONNECTION_REFUSED
